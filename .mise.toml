@@ -1,0 +1,33 @@
+[tools]
+erlang = "28.3.1"
+elixir = "1.19.5"
+
+[tasks.server]
+description = "Start Phoenix server"
+run = "mix phx.server"
+
+[tasks.iex]
+description = "Start interactive Elixir shell with Phoenix"
+run = "iex -S mix phx.server"
+
+[tasks.test]
+description = "Run tests"
+run = "mix test"
+
+[tasks.migrate]
+description = "Run database migrations"
+run = "mix ecto.migrate"
+
+[tasks.setup]
+description = "Setup project (deps + db)"
+run = ["mix deps.get", "mix ecto.setup"]
+
+[tasks.init]
+description = "First-time setup (Hex, rebar, Phoenix, deps, db)"
+run = [
+  "mix local.hex --force",
+  "mix local.rebar --force",
+  "mix archive.install hex phx_new --force",
+  "mix deps.get",
+  "mix ecto.setup"
+]
