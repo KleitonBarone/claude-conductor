@@ -2,7 +2,12 @@
 erlang = "28.3.1"
 elixir = "1.19.5"
 
+# ─────────────────────────────────────────────────────────────
+# Development
+# ─────────────────────────────────────────────────────────────
+
 [tasks.server]
+alias = "s"
 description = "Start Phoenix server"
 run = "mix phx.server"
 
@@ -10,24 +15,113 @@ run = "mix phx.server"
 description = "Start interactive Elixir shell with Phoenix"
 run = "iex -S mix phx.server"
 
+[tasks.console]
+alias = "c"
+description = "Start IEx console (no server)"
+run = "iex -S mix"
+
+# ─────────────────────────────────────────────────────────────
+# Database
+# ─────────────────────────────────────────────────────────────
+
+[tasks.migrate]
+alias = "m"
+description = "Run database migrations"
+run = "mix ecto.migrate"
+
+[tasks.rollback]
+description = "Rollback last migration"
+run = "mix ecto.rollback"
+
+[tasks."db:reset"]
+description = "Drop, create, and migrate database"
+run = "mix ecto.reset"
+
+[tasks."db:seed"]
+description = "Run database seeds"
+run = "mix run priv/repo/seeds.exs"
+
+# ─────────────────────────────────────────────────────────────
+# Code Quality
+# ─────────────────────────────────────────────────────────────
+
 [tasks.test]
+alias = "t"
 description = "Run tests"
 run = "mix test"
 
-[tasks.migrate]
-description = "Run database migrations"
-run = "mix ecto.migrate"
+[tasks."test:watch"]
+description = "Run tests in watch mode"
+run = "mix test.watch"
+
+[tasks.lint]
+alias = "l"
+description = "Run formatter check and Credo"
+run = "mix lint"
+
+[tasks.format]
+alias = "f"
+description = "Format all code"
+run = "mix format"
+
+[tasks.credo]
+description = "Run Credo static analysis"
+run = "mix credo --strict"
+
+[tasks.precommit]
+alias = "pc"
+description = "Run all checks before commit"
+run = "mix precommit"
+
+[tasks.compile]
+description = "Compile with warnings as errors"
+run = "mix compile --warnings-as-errors"
+
+# ─────────────────────────────────────────────────────────────
+# Dependencies
+# ─────────────────────────────────────────────────────────────
+
+[tasks.deps]
+description = "Get and compile dependencies"
+run = ["mix deps.get", "mix deps.compile"]
+
+[tasks."deps:update"]
+description = "Update all dependencies"
+run = "mix deps.update --all"
+
+[tasks."deps:outdated"]
+description = "List outdated dependencies"
+run = "mix hex.outdated"
+
+# ─────────────────────────────────────────────────────────────
+# Generators
+# ─────────────────────────────────────────────────────────────
+
+[tasks."gen:migration"]
+description = "Generate a new migration (pass name as arg)"
+run = "mix ecto.gen.migration"
+
+[tasks."gen:context"]
+description = "Generate context with schema (pass args)"
+run = "mix phx.gen.context"
+
+[tasks."gen:live"]
+description = "Generate LiveView (pass args)"
+run = "mix phx.gen.live"
+
+# ─────────────────────────────────────────────────────────────
+# Setup
+# ─────────────────────────────────────────────────────────────
 
 [tasks.setup]
 description = "Setup project (deps + db)"
 run = ["mix deps.get", "mix ecto.setup"]
 
 [tasks.init]
-description = "First-time setup (Hex, rebar, Phoenix, deps, db)"
+description = "First-time setup (Hex, rebar, deps, db)"
 run = [
   "mix local.hex --force",
   "mix local.rebar --force",
-  "mix archive.install hex phx_new --force",
   "mix deps.get",
   "mix ecto.setup"
 ]
