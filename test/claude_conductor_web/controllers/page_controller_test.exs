@@ -1,8 +1,8 @@
 defmodule ClaudeConductorWeb.PageControllerTest do
   use ClaudeConductorWeb.ConnCase
 
-  test "GET /", %{conn: conn} do
+  test "GET / renders project list", %{conn: conn} do
     conn = get(conn, ~p"/")
-    assert html_response(conn, 200) =~ "Peace of mind from prototype to production"
+    assert html_response(conn, 200) =~ "Projects"
   end
 end

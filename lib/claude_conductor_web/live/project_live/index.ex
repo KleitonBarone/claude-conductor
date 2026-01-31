@@ -11,7 +11,14 @@ defmodule ClaudeConductorWeb.ProjectLive.Index do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, stream(socket, :projects, Projects.list_projects_with_task_count())}
+    projects = Projects.list_projects_with_task_count()
+
+    socket =
+      socket
+      |> assign(:has_projects, projects != [])
+      |> stream(:projects, projects)
+
+    {:ok, socket}
   end
 
   @impl true
@@ -33,7 +40,12 @@ defmodule ClaudeConductorWeb.ProjectLive.Index do
 
   @impl true
   def handle_info({ClaudeConductorWeb.ProjectLive.FormComponent, {:saved, project}}, socket) do
-    {:noreply, stream_insert(socket, :projects, Map.put(project, :task_count, 0), at: 0)}
+    socket =
+      socket
+      |> assign(:has_projects, true)
+      |> stream_insert(:projects, Map.put(project, :task_count, 0), at: 0)
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -52,23 +64,15 @@ defmodule ClaudeConductorWeb.ProjectLive.Index do
         <div class="flex justify-between items-center mb-8">
           <div>
             <h1 class="text-2xl font-bold">Projects</h1>
-
             <p class="text-base-content/60">Manage your Claude Code projects</p>
           </div>
-
-          <.link patch={~p"/projects/new"} class="btn btn-primary">
+          <.link patch={~p"/new"} class="btn btn-primary">
             <.icon name="hero-plus" class="size-5" /> New Project
           </.link>
         </div>
 
         <div
-          :if={Enum.empty?(@streams.projects)}
-          id="empty-projects"
-          phx-update="stream"
-        >
-        </div>
-
-        <div
+          :if={@has_projects}
           id="projects"
           phx-update="stream"
           class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
@@ -79,30 +83,25 @@ defmodule ClaudeConductorWeb.ProjectLive.Index do
         </div>
 
         <.empty_state
-          :if={@streams.projects.inserts == []}
+          :if={!@has_projects}
           title="No projects yet"
           description="Create your first project to get started."
         >
           <:action>
-            <.link patch={~p"/projects/new"} class="btn btn-primary">
+            <.link patch={~p"/new"} class="btn btn-primary">
               <.icon name="hero-plus" class="size-5" /> New Project
             </.link>
           </:action>
         </.empty_state>
 
-        <.modal
-          :if={@live_action == :new}
-          id="project-modal"
-          show
-          on_cancel={JS.patch(~p"/projects")}
-        >
+        <.modal :if={@live_action == :new} id="project-modal" show on_cancel={JS.patch(~p"/")}>
           <.live_component
             module={ClaudeConductorWeb.ProjectLive.FormComponent}
             id={:new}
             title="New Project"
             action={@live_action}
             project={@project}
-            patch={~p"/projects"}
+            patch={~p"/"}
           />
         </.modal>
       </div>

@@ -274,7 +274,7 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
         <div class="flex justify-between items-start mb-8">
           <div>
             <div class="flex items-center gap-2 mb-1">
-              <.link navigate={~p"/projects"} class="btn btn-ghost btn-sm">
+              <.link navigate={~p"/"} class="btn btn-ghost btn-sm">
                 <.icon name="hero-arrow-left" class="size-4" />
               </.link>
               <h1 class="text-2xl font-bold">{@project.name}</h1>

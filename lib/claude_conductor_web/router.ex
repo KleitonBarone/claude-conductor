@@ -17,10 +17,8 @@ defmodule ClaudeConductorWeb.Router do
   scope "/", ClaudeConductorWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
-
-    live "/projects", ProjectLive.Index, :index
-    live "/projects/new", ProjectLive.Index, :new
+    live "/", ProjectLive.Index, :index
+    live "/new", ProjectLive.Index, :new
     live "/projects/:id", ProjectLive.Show, :show
     live "/projects/:id/tasks/new", ProjectLive.Show, :new_task
   end
