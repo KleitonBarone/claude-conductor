@@ -78,6 +78,8 @@ defmodule ClaudeConductor.Sessions.SessionServer do
   @impl true
   def init(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
+    cli_override = Keyword.get(opts, :cli_override)
+    cli_args_override = Keyword.get(opts, :cli_args_override)
     Process.flag(:trap_exit, true)
 
     # Load session with associations
@@ -93,7 +95,9 @@ defmodule ClaudeConductor.Sessions.SessionServer do
       port: nil,
       buffer: "",
       claude_session_id: nil,
-      status: :starting
+      status: :starting,
+      cli_override: cli_override,
+      cli_args_override: cli_args_override
     }
 
     # Start the CLI process asynchronously
@@ -198,7 +202,7 @@ defmodule ClaudeConductor.Sessions.SessionServer do
   # ─────────────────────────────────────────────────────────────
 
   defp start_cli_port(state) do
-    cli_path = find_cli_executable()
+    cli_path = find_cli_executable(state)
 
     if is_nil(cli_path) do
       {:error, :cli_not_found}
@@ -227,28 +231,42 @@ defmodule ClaudeConductor.Sessions.SessionServer do
     end
   end
 
-  defp find_cli_executable do
-    # Try common locations
-    System.find_executable(@cli_executable) ||
-      System.find_executable("claude.cmd") ||
-      System.find_executable("claude.exe")
+  defp find_cli_executable(state) do
+    # Check for test override first
+    case Map.get(state, :cli_override) do
+      nil ->
+        # Try common locations
+        System.find_executable(@cli_executable) ||
+          System.find_executable("claude.cmd") ||
+          System.find_executable("claude.exe")
+
+      override ->
+        override
+    end
   end
 
   defp build_cli_args(state) do
-    base_args = [
-      "-p",
-      state.task.prompt || "Hello",
-      "--output-format",
-      "stream-json",
-      "--allowedTools",
-      Enum.join(@default_tools, ",")
-    ]
+    # Use override args for testing if provided
+    case Map.get(state, :cli_args_override) do
+      nil ->
+        base_args = [
+          "-p",
+          state.task.prompt || "Hello",
+          "--output-format",
+          "stream-json",
+          "--allowedTools",
+          Enum.join(@default_tools, ",")
+        ]
 
-    # Add --resume if we have a previous Claude session ID
-    if state.claude_session_id do
-      base_args ++ ["--resume", state.claude_session_id]
-    else
-      base_args
+        # Add --resume if we have a previous Claude session ID
+        if state.claude_session_id do
+          base_args ++ ["--resume", state.claude_session_id]
+        else
+          base_args
+        end
+
+      override_args ->
+        override_args
     end
   end
 
