@@ -278,21 +278,27 @@ defmodule ClaudeConductor.Sessions.SessionServer do
     # Use override args for testing if provided
     case Map.get(state, :cli_args_override) do
       nil ->
+        # -p/--print is for non-interactive mode (print and exit)
+        # The prompt is passed as the last positional argument
         base_args = [
-          "-p",
-          state.task.prompt || "Hello",
+          "--print",
           "--output-format",
           "stream-json",
+          "--dangerously-skip-permissions",
           "--allowedTools",
           Enum.join(@default_tools, ",")
         ]
 
         # Add --resume if we have a previous Claude session ID
-        if state.claude_session_id do
-          base_args ++ ["--resume", state.claude_session_id]
-        else
-          base_args
-        end
+        base_args =
+          if state.claude_session_id do
+            base_args ++ ["--resume", state.claude_session_id]
+          else
+            base_args
+          end
+
+        # Prompt must be the last positional argument
+        base_args ++ [state.task.prompt || "Hello"]
 
       override_args ->
         override_args
