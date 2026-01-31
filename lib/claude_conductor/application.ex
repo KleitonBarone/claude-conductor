@@ -14,8 +14,9 @@ defmodule ClaudeConductor.Application do
        repos: Application.fetch_env!(:claude_conductor, :ecto_repos), skip: skip_migrations?()},
       {DNSCluster, query: Application.get_env(:claude_conductor, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: ClaudeConductor.PubSub},
-      # Start a worker by calling: ClaudeConductor.Worker.start_link(arg)
-      # {ClaudeConductor.Worker, arg},
+      # Session management for Claude Code CLI
+      ClaudeConductor.Sessions.SessionRegistry,
+      ClaudeConductor.Sessions.SessionSupervisor,
       # Start to serve requests, typically the last entry
       ClaudeConductorWeb.Endpoint
     ]

@@ -117,4 +117,68 @@ defmodule ClaudeConductor.Sessions do
       metadata: metadata
     })
   end
+
+  # ─────────────────────────────────────────────────────────────
+  # Session Execution (via SessionServer)
+  # ─────────────────────────────────────────────────────────────
+
+  alias ClaudeConductor.Sessions.{SessionSupervisor, SessionServer, SessionRegistry}
+
+  @doc """
+  Start executing a session with Claude Code CLI.
+
+  Creates a SessionServer process that manages the CLI interaction.
+  The session must already exist in the database.
+
+  ## Returns
+
+  - `{:ok, pid}` on success
+  - `{:error, {:already_started, pid}}` if already running
+  - `{:error, reason}` on failure
+  """
+  def run_session(session_id) do
+    SessionSupervisor.start_session(session_id)
+  end
+
+  @doc """
+  Stop a running session gracefully.
+  """
+  def stop_running_session(session_id) do
+    SessionServer.stop(session_id)
+  end
+
+  @doc """
+  Check if a session is currently being executed.
+  """
+  def session_running?(session_id) do
+    SessionRegistry.running?(session_id)
+  end
+
+  @doc """
+  Get the execution status of a session.
+
+  Returns `:starting`, `:running`, `:stopping`, or `:not_running`.
+  """
+  def get_execution_status(session_id) do
+    SessionServer.get_status(session_id)
+  end
+
+  @doc """
+  List all currently running session IDs.
+  """
+  def list_running_sessions do
+    SessionSupervisor.list_running()
+  end
+
+  @doc """
+  Create a session and immediately start running it.
+
+  Convenience function that combines create_session and run_session.
+  """
+  def create_and_run_session(attrs) do
+    with {:ok, session} <- create_session(attrs),
+         {:ok, pid} <- run_session(session.id) do
+      {:ok, session, pid}
+    end
+  end
 end
