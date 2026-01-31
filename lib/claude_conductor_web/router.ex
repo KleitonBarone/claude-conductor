@@ -18,6 +18,11 @@ defmodule ClaudeConductorWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+
+    live "/projects", ProjectLive.Index, :index
+    live "/projects/new", ProjectLive.Index, :new
+    live "/projects/:id", ProjectLive.Show, :show
+    live "/projects/:id/tasks/new", ProjectLive.Show, :new_task
   end
 
   # Other scopes may use custom stacks.

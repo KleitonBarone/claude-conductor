@@ -17,6 +17,16 @@ defmodule ClaudeConductor.Projects do
     |> Repo.all()
   end
 
+  def list_projects_with_task_count do
+    Project
+    |> order_by(desc: :updated_at)
+    |> Repo.all()
+    |> Repo.preload(:tasks)
+    |> Enum.map(fn project ->
+      Map.put(project, :task_count, length(project.tasks))
+    end)
+  end
+
   def get_project!(id) do
     Repo.get!(Project, id)
   end
