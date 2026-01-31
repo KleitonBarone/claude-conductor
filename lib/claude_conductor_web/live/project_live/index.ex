@@ -131,28 +131,35 @@ defmodule ClaudeConductorWeb.ProjectLive.Index do
           phx-update="stream"
           class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
         >
-          <div :for={{id, project} <- @streams.projects} id={id}>
-            <.link
-              navigate={~p"/projects/#{project}"}
-              class="card bg-base-100 shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5 h-full"
-            >
-              <div class="card-body p-4">
-                <h2 class="card-title text-base">{project.name}</h2>
-                <p class="text-xs text-base-content/60 font-mono truncate">{project.path}</p>
-                <p
-                  :if={project.description}
-                  class="text-sm text-base-content/70 line-clamp-2 mt-1"
-                >
-                  {project.description}
-                </p>
-                <div class="flex items-center justify-between mt-auto pt-2">
-                  <span class="badge badge-ghost badge-sm">
-                    {project.task_count || 0} tasks
-                  </span>
-                  <.icon name="hero-chevron-right" class="size-4 text-base-content/40" />
-                </div>
+          <div
+            :for={{id, project} <- @streams.projects}
+            id={id}
+            class="card bg-base-100 shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5 h-full relative group"
+          >
+            <.link navigate={~p"/projects/#{project}"} class="card-body p-4">
+              <h2 class="card-title text-base">{project.name}</h2>
+              <p class="text-xs text-base-content/60 font-mono truncate">{project.path}</p>
+              <p
+                :if={project.description}
+                class="text-sm text-base-content/70 line-clamp-2 mt-1"
+              >
+                {project.description}
+              </p>
+              <div class="flex items-center justify-between mt-auto pt-2">
+                <span class="badge badge-ghost badge-sm">
+                  {project.task_count || 0} tasks
+                </span>
+                <.icon name="hero-chevron-right" class="size-4 text-base-content/40" />
               </div>
             </.link>
+            <button
+              class="btn btn-ghost btn-xs btn-circle absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity text-error"
+              phx-click="delete"
+              phx-value-id={project.id}
+              data-confirm="Delete this project and all its tasks?"
+            >
+              <.icon name="hero-trash" class="size-4" />
+            </button>
           </div>
         </div>
 

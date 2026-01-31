@@ -126,12 +126,14 @@ defmodule ClaudeConductor.Sessions.SessionServer do
   @impl true
   def handle_continue(:graceful_stop, %{port: port} = state) when not is_nil(port) do
     # Close the port which sends SIGTERM to the CLI process
+    # Keep the port reference so we can match the EXIT message
     Port.close(port)
-    {:noreply, %{state | port: nil}}
+    {:noreply, %{state | status: :stopping}}
   end
 
   def handle_continue(:graceful_stop, state) do
-    {:stop, :normal, state}
+    # No port to close, complete the session and stop
+    complete_and_stop(state, 0, :normal)
   end
 
   @impl true
@@ -157,13 +159,16 @@ defmodule ClaudeConductor.Sessions.SessionServer do
 
   def handle_info({port, {:exit_status, exit_code}}, %{port: port} = state) do
     Logger.info("CLI exited with code #{exit_code} for session #{state.session_id}")
-
-    {:ok, session} = Sessions.complete_session(state.session, exit_code)
-    broadcast(state.session_id, :session_completed, %{exit_code: exit_code})
-
-    {:stop, :normal, %{state | port: nil, session: session}}
+    complete_and_stop(state, exit_code, :normal)
   end
 
+  # Handle EXIT when we initiated the stop (status is :stopping)
+  def handle_info({:EXIT, port, reason}, %{port: port, status: :stopping} = state) do
+    Logger.info("Port closed gracefully for session #{state.session_id}: #{inspect(reason)}")
+    complete_and_stop(state, 0, :normal)
+  end
+
+  # Handle unexpected EXIT (crash or external termination)
   def handle_info({:EXIT, port, reason}, %{port: port} = state) do
     Logger.warning("Port exited unexpectedly for session #{state.session_id}: #{inspect(reason)}")
 
@@ -188,13 +193,37 @@ defmodule ClaudeConductor.Sessions.SessionServer do
     end
 
     # Ensure session is marked as completed/failed if still running
-    if state.session.status == "running" do
-      exit_code = if reason == :normal, do: 0, else: 1
-      Sessions.complete_session(state.session, exit_code)
-      broadcast(state.session_id, :session_terminated, %{reason: reason})
+    # Check database state, not cached state
+    case Sessions.get_session(state.session_id) do
+      {:ok, session} when session.status == "running" ->
+        exit_code = if reason == :normal, do: 0, else: 1
+        Sessions.complete_session(session, exit_code)
+        # Also update the task status
+        update_task_status(state.task, exit_code)
+        broadcast(state.session_id, :session_terminated, %{reason: reason})
+
+      _ ->
+        :ok
     end
 
     :ok
+  end
+
+  # ─────────────────────────────────────────────────────────────
+  # Private Functions - Session Completion
+  # ─────────────────────────────────────────────────────────────
+
+  defp complete_and_stop(state, exit_code, stop_reason) do
+    {:ok, session} = Sessions.complete_session(state.session, exit_code)
+    update_task_status(state.task, exit_code)
+    broadcast(state.session_id, :session_completed, %{exit_code: exit_code})
+
+    {:stop, stop_reason, %{state | port: nil, session: session}}
+  end
+
+  defp update_task_status(task, exit_code) do
+    new_status = if exit_code == 0, do: "completed", else: "failed"
+    Projects.update_task_status(task, new_status)
   end
 
   # ─────────────────────────────────────────────────────────────

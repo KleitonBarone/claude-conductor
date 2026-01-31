@@ -22,6 +22,13 @@ defmodule ClaudeConductor.Sessions do
     Repo.get!(Session, id)
   end
 
+  def get_session(id) do
+    case Repo.get(Session, id) do
+      nil -> {:error, :not_found}
+      session -> {:ok, session}
+    end
+  end
+
   def get_session_with_messages!(id) do
     Session
     |> Repo.get!(id)

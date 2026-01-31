@@ -139,6 +139,28 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
     end
   end
 
+  def handle_event("delete_task", %{"id" => id}, socket) do
+    task = Projects.get_task!(id)
+
+    # Don't allow deleting running tasks
+    if task.status == "running" do
+      {:noreply, put_flash(socket, :error, "Cannot delete a running task")}
+    else
+      {:ok, _} = Projects.delete_task(task)
+
+      socket =
+        socket
+        |> assign(:selected_task, nil)
+        |> assign(:selected_session, nil)
+        |> assign(:messages, [])
+        |> assign(:streaming_content, [])
+        |> refresh_tasks()
+        |> put_flash(:info, "Task deleted")
+
+      {:noreply, socket}
+    end
+  end
+
   # ─────────────────────────────────────────────────────────────
   # PubSub Handlers
   # ─────────────────────────────────────────────────────────────
@@ -404,6 +426,15 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
                   phx-value-id={@selected_session.id}
                 >
                   <.icon name="hero-stop" class="size-4" /> Stop
+                </button>
+                <button
+                  :if={@selected_task.status != "running"}
+                  class="btn btn-ghost btn-sm text-error"
+                  phx-click="delete_task"
+                  phx-value-id={@selected_task.id}
+                  data-confirm="Delete this task?"
+                >
+                  <.icon name="hero-trash" class="size-4" />
                 </button>
               </div>
 
