@@ -28,25 +28,15 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
       |> assign(:selected_session, nil)
       |> assign(:streaming_content, [])
       |> assign(:messages, [])
+      |> assign(:show_task_form, false)
+      |> assign(:task_form, to_form(Projects.change_task(%Task{})))
 
     {:ok, socket}
   end
 
   @impl true
-  def handle_params(params, _url, socket) do
-    {:noreply, apply_action(socket, socket.assigns.live_action, params)}
-  end
-
-  defp apply_action(socket, :show, _params) do
-    socket
-    |> assign(:page_title, socket.assigns.project.name)
-    |> assign(:task, nil)
-  end
-
-  defp apply_action(socket, :new_task, _params) do
-    socket
-    |> assign(:page_title, "New Task")
-    |> assign(:task, %Task{project_id: socket.assigns.project.id})
+  def handle_params(_params, _url, socket) do
+    {:noreply, assign(socket, :page_title, socket.assigns.project.name)}
   end
 
   # ─────────────────────────────────────────────────────────────
@@ -54,12 +44,43 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
   # ─────────────────────────────────────────────────────────────
 
   @impl true
+  def handle_event("toggle_task_form", _params, socket) do
+    {:noreply, assign(socket, :show_task_form, !socket.assigns.show_task_form)}
+  end
+
+  def handle_event("validate_task", %{"task" => params}, socket) do
+    changeset =
+      %Task{}
+      |> Projects.change_task(params)
+      |> Map.put(:action, :validate)
+
+    {:noreply, assign(socket, :task_form, to_form(changeset))}
+  end
+
+  def handle_event("save_task", %{"task" => params}, socket) do
+    params = Map.put(params, "project_id", socket.assigns.project.id)
+
+    case Projects.create_task(params) do
+      {:ok, _task} ->
+        socket =
+          socket
+          |> assign(:show_task_form, false)
+          |> assign(:task_form, to_form(Projects.change_task(%Task{})))
+          |> refresh_tasks()
+          |> put_flash(:info, "Task created")
+
+        {:noreply, socket}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, :task_form, to_form(changeset))}
+    end
+  end
+
   def handle_event("select_task", %{"id" => id}, socket) do
     task = Projects.get_task!(id)
     session = Sessions.get_latest_session(task.id)
     messages = if session, do: Sessions.list_messages(session.id), else: []
 
-    # Subscribe to session if running
     if session && session.status == "running" do
       Phoenix.PubSub.subscribe(ClaudeConductor.PubSub, "session:#{session.id}")
     end
@@ -88,10 +109,7 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
 
     case Sessions.create_and_run_session(%{task_id: task.id}) do
       {:ok, session, _pid} ->
-        # Subscribe to the new session
         Phoenix.PubSub.subscribe(ClaudeConductor.PubSub, "session:#{session.id}")
-
-        # Update task status
         {:ok, updated_task} = Projects.update_task_status(task, "running")
 
         socket =
@@ -101,12 +119,11 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
           |> assign(:selected_session, session)
           |> assign(:messages, [])
           |> assign(:streaming_content, [])
-          |> put_flash(:info, "Session started")
 
         {:noreply, socket}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to start session: #{inspect(reason)}")}
+        {:noreply, put_flash(socket, :error, "Failed to start: #{inspect(reason)}")}
     end
   end
 
@@ -115,49 +132,36 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
 
     case Sessions.stop_running_session(session_id) do
       :ok ->
-        {:noreply, put_flash(socket, :info, "Session stopping...")}
+        {:noreply, put_flash(socket, :info, "Stopping...")}
 
       {:error, reason} ->
-        {:noreply, put_flash(socket, :error, "Failed to stop: #{inspect(reason)}")}
+        {:noreply, put_flash(socket, :error, "Failed: #{inspect(reason)}")}
     end
-  end
-
-  @impl true
-  def handle_info({ClaudeConductorWeb.ProjectLive.TaskFormComponent, {:saved, _task}}, socket) do
-    {:noreply, refresh_tasks(socket)}
   end
 
   # ─────────────────────────────────────────────────────────────
   # PubSub Handlers
   # ─────────────────────────────────────────────────────────────
 
-  def handle_info({:session_started, _payload}, socket) do
-    {:noreply, refresh_tasks(socket)}
-  end
+  @impl true
+  def handle_info({:session_started, _}, socket), do: {:noreply, refresh_tasks(socket)}
 
   def handle_info({:session_completed, %{exit_code: exit_code}}, socket) do
-    # Update task status based on exit code
     if socket.assigns.selected_task do
       new_status = if exit_code == 0, do: "completed", else: "failed"
       Projects.update_task_status(socket.assigns.selected_task, new_status)
     end
 
-    # Reload messages from database
     messages =
-      if socket.assigns.selected_session do
-        Sessions.list_messages(socket.assigns.selected_session.id)
-      else
-        []
-      end
+      if socket.assigns.selected_session,
+        do: Sessions.list_messages(socket.assigns.selected_session.id),
+        else: []
 
-    socket =
-      socket
-      |> refresh_tasks()
-      |> assign(:messages, messages)
-      |> assign(:streaming_content, [])
-      |> put_flash(:info, "Session completed (exit code: #{exit_code})")
-
-    {:noreply, socket}
+    {:noreply,
+     socket
+     |> refresh_tasks()
+     |> assign(:messages, messages)
+     |> assign(:streaming_content, [])}
   end
 
   def handle_info({:session_failed, %{reason: reason}}, socket) do
@@ -165,54 +169,40 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
       Projects.update_task_status(socket.assigns.selected_task, "failed")
     end
 
-    socket =
-      socket
-      |> refresh_tasks()
-      |> put_flash(:error, "Session failed: #{inspect(reason)}")
-
-    {:noreply, socket}
+    {:noreply,
+     socket
+     |> refresh_tasks()
+     |> put_flash(:error, "Session failed: #{inspect(reason)}")}
   end
 
   def handle_info({:message, %{role: role, content: content}}, socket) do
-    # Add complete message to streaming content
     new_content = {System.unique_integer(), "#{role}: #{content}"}
 
-    {:noreply,
-     update(socket, :streaming_content, fn content_list ->
-       content_list ++ [new_content]
-     end)}
+    {:noreply, update(socket, :streaming_content, &(&1 ++ [new_content]))}
   end
 
   def handle_info({:content_delta, %{"delta" => %{"text" => text}}}, socket) do
-    # Append delta to last streaming item or create new
     {:noreply,
-     update(socket, :streaming_content, fn content_list ->
-       case content_list do
+     update(socket, :streaming_content, fn list ->
+       case list do
          [] ->
            [{System.unique_integer(), text}]
 
-         list ->
-           {id, last_text} = List.last(list)
-           List.replace_at(list, -1, {id, last_text <> text})
+         _ ->
+           {id, last} = List.last(list)
+           List.replace_at(list, -1, {id, last <> text})
        end
      end)}
   end
 
   def handle_info({:tool_use, %{"name" => name}}, socket) do
     new_content = {System.unique_integer(), "[Tool: #{name}]"}
-
-    {:noreply,
-     update(socket, :streaming_content, fn content_list ->
-       content_list ++ [new_content]
-     end)}
+    {:noreply, update(socket, :streaming_content, &(&1 ++ [new_content]))}
   end
 
-  def handle_info({:tool_result, _event}, socket) do
-    {:noreply, socket}
-  end
-
-  def handle_info({event, _payload}, socket)
+  def handle_info({event, _}, socket)
       when event in [
+             :tool_result,
              :content_block_start,
              :content_block_stop,
              :message_start,
@@ -224,7 +214,7 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
   end
 
   # ─────────────────────────────────────────────────────────────
-  # Private Functions
+  # Private
   # ─────────────────────────────────────────────────────────────
 
   defp subscribe_to_running_sessions(tasks) do
@@ -239,10 +229,7 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
 
   defp group_tasks_by_status(tasks) do
     grouped = Enum.group_by(tasks, & &1.status)
-
-    @statuses
-    |> Enum.map(fn status -> {status, Map.get(grouped, status, [])} end)
-    |> Map.new()
+    Map.new(@statuses, fn s -> {s, Map.get(grouped, s, [])} end)
   end
 
   defp refresh_tasks(socket) do
@@ -257,7 +244,12 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
   defp status_title("running"), do: "Running"
   defp status_title("completed"), do: "Completed"
   defp status_title("failed"), do: "Failed"
-  defp status_title(status), do: String.capitalize(status)
+  defp status_title(s), do: String.capitalize(s)
+
+  defp message_class("assistant"), do: "text-success"
+  defp message_class("user"), do: "text-info"
+  defp message_class("tool"), do: "text-warning"
+  defp message_class(_), do: "text-base-content"
 
   # ─────────────────────────────────────────────────────────────
   # Render
@@ -269,180 +261,192 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
 
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="container mx-auto px-4 py-8">
+      <div class="flex flex-col h-[calc(100vh-4rem)]">
         <%!-- Header --%>
-        <div class="flex justify-between items-start mb-8">
-          <div>
-            <div class="flex items-center gap-2 mb-1">
-              <.link navigate={~p"/"} class="btn btn-ghost btn-sm">
-                <.icon name="hero-arrow-left" class="size-4" />
-              </.link>
-              <h1 class="text-2xl font-bold">{@project.name}</h1>
+        <div class="p-4 border-b border-base-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <.link navigate={~p"/"} class="btn btn-ghost btn-sm btn-circle shrink-0">
+              <.icon name="hero-arrow-left" class="size-5" />
+            </.link>
+            <div class="min-w-0">
+              <h1 class="font-bold truncate">{@project.name}</h1>
+              <p class="text-xs text-base-content/60 font-mono truncate">{@project.path}</p>
             </div>
-
-            <p class="text-base-content/60 font-mono text-sm ml-10">{@project.path}</p>
           </div>
-
-          <.link patch={~p"/projects/#{@project}/tasks/new"} class="btn btn-primary">
-            <.icon name="hero-plus" class="size-5" /> New Task
-          </.link>
-        </div>
-        <%!-- Kanban Board --%>
-        <div class="flex gap-4 overflow-x-auto pb-4">
-          <.kanban_column
-            :for={status <- @statuses}
-            title={status_title(status)}
-            status={status}
-            count={length(Map.get(@tasks_by_status, status, []))}
+          <button
+            phx-click="toggle_task_form"
+            class={["btn btn-sm shrink-0", (@show_task_form && "btn-ghost") || "btn-primary"]}
           >
-            <div
-              :for={task <- Map.get(@tasks_by_status, status, [])}
-              id={"task-#{task.id}"}
-              class={[
-                "card bg-base-100 shadow-sm cursor-pointer hover:shadow-md transition-shadow",
-                @selected_task && @selected_task.id == task.id && "ring-2 ring-primary"
-              ]}
-              phx-click="select_task"
-              phx-value-id={task.id}
-            >
-              <div class="card-body p-4">
-                <h3 class="card-title text-sm">{task.title}</h3>
+            <.icon name={(@show_task_form && "hero-x-mark") || "hero-plus"} class="size-4" />
+            {(@show_task_form && "Cancel") || "Add Task"}
+          </button>
+        </div>
 
-                <p :if={task.prompt} class="text-xs text-base-content/70 line-clamp-2">
-                  {task.prompt}
-                </p>
+        <%!-- Inline task form --%>
+        <div :if={@show_task_form} class="p-4 bg-base-200 border-b border-base-300">
+          <.form
+            for={@task_form}
+            phx-change="validate_task"
+            phx-submit="save_task"
+            class="flex flex-col sm:flex-row gap-2"
+          >
+            <.input
+              field={@task_form[:title]}
+              type="text"
+              placeholder="Task title"
+              class="input-sm flex-1"
+              phx-debounce="200"
+            />
+            <.input
+              field={@task_form[:prompt]}
+              type="text"
+              placeholder="Prompt for Claude..."
+              class="input-sm flex-[2]"
+              phx-debounce="200"
+            />
+            <.button class="btn-primary btn-sm shrink-0">
+              <.icon name="hero-plus" class="size-4" /> Add
+            </.button>
+          </.form>
+        </div>
 
-                <div class="card-actions justify-between items-center mt-2">
-                  <.status_badge status={task.status} />
-                  <button
-                    :if={task.status in ["pending", "completed", "failed", "cancelled"]}
-                    class="btn btn-primary btn-xs"
-                    phx-click="run_task"
-                    phx-value-id={task.id}
-                  >
-                    <.icon name="hero-play" class="size-3" /> Run
-                  </button>
-                  <span
-                    :if={task.status == "running"}
-                    class="loading loading-spinner loading-xs text-info"
-                  >
+        <%!-- Main content area --%>
+        <div class="flex-1 flex overflow-hidden">
+          <%!-- Kanban Board --%>
+          <div class={[
+            "flex-1 overflow-x-auto p-4",
+            @selected_task && "hidden lg:block lg:w-1/2 xl:w-2/3"
+          ]}>
+            <div class="flex gap-4 min-w-max h-full">
+              <div :for={status <- @statuses} class="w-64 flex flex-col">
+                <div class="flex items-center gap-2 mb-2 px-1">
+                  <h3 class="font-medium text-sm">{status_title(status)}</h3>
+                  <span class="badge badge-xs badge-ghost">
+                    {length(Map.get(@tasks_by_status, status, []))}
                   </span>
                 </div>
-              </div>
-            </div>
-          </.kanban_column>
-        </div>
-        <%!-- Task Detail Drawer --%>
-        <div
-          :if={@selected_task}
-          class="fixed inset-y-0 right-0 w-96 bg-base-200 shadow-xl z-40 overflow-hidden flex flex-col"
-        >
-          <div class="flex justify-between items-center p-4 border-b border-base-300">
-            <h2 class="text-lg font-semibold truncate">{@selected_task.title}</h2>
-
-            <button class="btn btn-ghost btn-sm" phx-click="close_detail">
-              <.icon name="hero-x-mark" class="size-5" />
-            </button>
-          </div>
-
-          <div class="flex-1 overflow-y-auto p-4 space-y-4">
-            <%!-- Prompt --%>
-            <div>
-              <h4 class="font-medium text-sm mb-2">Prompt</h4>
-              <pre class="whitespace-pre-wrap text-xs bg-base-300 rounded-lg p-3">{@selected_task.prompt || "(no prompt)"}</pre>
-            </div>
-            <%!-- Session Controls --%>
-            <div class="flex gap-2">
-              <button
-                :if={@selected_task.status in ["pending", "completed", "failed", "cancelled"]}
-                class="btn btn-primary btn-sm flex-1"
-                phx-click="run_task"
-                phx-value-id={@selected_task.id}
-              >
-                <.icon name="hero-play" class="size-4" /> Run Task
-              </button>
-              <button
-                :if={@selected_task.status == "running" && @selected_session}
-                class="btn btn-error btn-sm flex-1"
-                phx-click="stop_session"
-                phx-value-id={@selected_session.id}
-              >
-                <.icon name="hero-stop" class="size-4" /> Stop
-              </button>
-            </div>
-            <%!-- Session Output --%>
-            <div :if={@selected_session || @streaming_content != []}>
-              <h4 class="font-medium text-sm mb-2">
-                Session Output
-                <span
-                  :if={@selected_task.status == "running"}
-                  class="loading loading-dots loading-xs ml-2"
-                >
-                </span>
-              </h4>
-
-              <div
-                id="session-output"
-                class="bg-base-300 rounded-lg p-3 h-80 overflow-y-auto font-mono text-xs space-y-1"
-                phx-hook="ScrollBottom"
-              >
-                <%!-- Persisted messages --%>
-                <div :for={message <- @messages} class={message_class(message.role)}>
-                  <span class="font-bold">{message.role}:</span>
-                  <span class="whitespace-pre-wrap">{message.content}</span>
-                </div>
-                <%!-- Streaming content --%>
-                <div
-                  :for={{id, content} <- @streaming_content}
-                  id={"stream-#{id}"}
-                  class="text-primary whitespace-pre-wrap"
-                >
-                  {content}
-                </div>
-                <%!-- Running indicator --%>
-                <div
-                  :if={
-                    @selected_task.status == "running" && @streaming_content == [] && @messages == []
-                  }
-                  class="text-base-content/50"
-                >
-                  Waiting for output...
+                <div class="flex-1 bg-base-200/50 rounded-lg p-2 space-y-2 overflow-y-auto">
+                  <div
+                    :for={task <- Map.get(@tasks_by_status, status, [])}
+                    class={[
+                      "card bg-base-100 shadow-sm cursor-pointer hover:shadow transition-all",
+                      @selected_task && @selected_task.id == task.id && "ring-2 ring-primary"
+                    ]}
+                    phx-click="select_task"
+                    phx-value-id={task.id}
+                  >
+                    <div class="card-body p-3">
+                      <h4 class="font-medium text-sm leading-tight">{task.title}</h4>
+                      <p :if={task.prompt} class="text-xs text-base-content/60 line-clamp-2">
+                        {task.prompt}
+                      </p>
+                      <div class="flex items-center justify-between mt-1">
+                        <.status_badge status={task.status} />
+                        <button
+                          :if={task.status in ["pending", "completed", "failed", "cancelled"]}
+                          class="btn btn-primary btn-xs"
+                          phx-click="run_task"
+                          phx-value-id={task.id}
+                        >
+                          <.icon name="hero-play" class="size-3" />
+                        </button>
+                        <span
+                          :if={task.status == "running"}
+                          class="loading loading-spinner loading-xs text-info"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    :if={Map.get(@tasks_by_status, status, []) == []}
+                    class="text-center text-base-content/40 py-8 text-xs"
+                  >
+                    No tasks
+                  </div>
                 </div>
               </div>
             </div>
           </div>
+
+          <%!-- Task Detail Panel --%>
+          <div
+            :if={@selected_task}
+            class="w-full lg:w-1/2 xl:w-1/3 border-l border-base-300 flex flex-col bg-base-100"
+          >
+            <div class="flex items-center justify-between p-3 border-b border-base-300">
+              <h2 class="font-semibold truncate">{@selected_task.title}</h2>
+              <button class="btn btn-ghost btn-sm btn-circle" phx-click="close_detail">
+                <.icon name="hero-x-mark" class="size-5" />
+              </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto p-3 space-y-3">
+              <%!-- Prompt --%>
+              <div>
+                <h4 class="text-xs font-medium text-base-content/60 mb-1">Prompt</h4>
+                <pre class="text-sm bg-base-200 rounded p-2 whitespace-pre-wrap">{@selected_task.prompt || "(empty)"}</pre>
+              </div>
+
+              <%!-- Actions --%>
+              <div class="flex gap-2">
+                <button
+                  :if={@selected_task.status in ["pending", "completed", "failed", "cancelled"]}
+                  class="btn btn-primary btn-sm flex-1"
+                  phx-click="run_task"
+                  phx-value-id={@selected_task.id}
+                >
+                  <.icon name="hero-play" class="size-4" /> Run
+                </button>
+                <button
+                  :if={@selected_task.status == "running" && @selected_session}
+                  class="btn btn-error btn-sm flex-1"
+                  phx-click="stop_session"
+                  phx-value-id={@selected_session.id}
+                >
+                  <.icon name="hero-stop" class="size-4" /> Stop
+                </button>
+              </div>
+
+              <%!-- Session Output --%>
+              <div :if={@selected_session || @streaming_content != []}>
+                <div class="flex items-center gap-2 mb-1">
+                  <h4 class="text-xs font-medium text-base-content/60">Output</h4>
+                  <span
+                    :if={@selected_task.status == "running"}
+                    class="loading loading-dots loading-xs"
+                  />
+                </div>
+                <div
+                  id="session-output"
+                  class="bg-base-200 rounded p-2 h-64 overflow-y-auto font-mono text-xs space-y-1"
+                  phx-hook="ScrollBottom"
+                >
+                  <div :for={msg <- @messages} class={message_class(msg.role)}>
+                    <span class="opacity-60">{msg.role}:</span> {msg.content}
+                  </div>
+                  <div
+                    :for={{id, content} <- @streaming_content}
+                    id={"s-#{id}"}
+                    class="text-primary whitespace-pre-wrap"
+                  >
+                    {content}
+                  </div>
+                  <div
+                    :if={
+                      @selected_task.status == "running" && @streaming_content == [] &&
+                        @messages == []
+                    }
+                    class="text-base-content/40"
+                  >
+                    Waiting...
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <%!-- Backdrop for drawer --%>
-        <div
-          :if={@selected_task}
-          class="fixed inset-0 bg-black/20 z-30"
-          phx-click="close_detail"
-        >
-        </div>
-        <%!-- New Task Modal --%>
-        <.modal
-          :if={@live_action == :new_task}
-          id="task-modal"
-          show
-          on_cancel={JS.patch(~p"/projects/#{@project}")}
-        >
-          <.live_component
-            module={ClaudeConductorWeb.ProjectLive.TaskFormComponent}
-            id={:new}
-            title="New Task"
-            action={:new}
-            task={@task}
-            project={@project}
-            patch={~p"/projects/#{@project}"}
-          />
-        </.modal>
       </div>
     </Layouts.app>
     """
   end
-
-  defp message_class("assistant"), do: "text-success"
-  defp message_class("user"), do: "text-info"
-  defp message_class("tool"), do: "text-warning"
-  defp message_class(_), do: "text-base-content"
 end

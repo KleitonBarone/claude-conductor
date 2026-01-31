@@ -18,13 +18,6 @@ defmodule ClaudeConductorWeb.Router do
     pipe_through :browser
 
     live "/", ProjectLive.Index, :index
-    live "/new", ProjectLive.Index, :new
     live "/projects/:id", ProjectLive.Show, :show
-    live "/projects/:id/tasks/new", ProjectLive.Show, :new_task
   end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", ClaudeConductorWeb do
-  #   pipe_through :api
-  # end
 end
