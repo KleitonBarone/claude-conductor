@@ -81,6 +81,45 @@ defmodule ClaudeConductor.Sessions do
     })
   end
 
+  @doc """
+  Reset orphaned sessions and their associated tasks.
+
+  Called on application startup to clean up sessions that were marked as "running"
+  but have no corresponding process (e.g., after a crash or restart).
+
+  Also resets any tasks marked as "running" since no task should be running
+  without an active process.
+
+  Returns the number of sessions that were reset.
+  """
+  def reset_orphaned_sessions do
+    alias ClaudeConductor.Projects.Task
+
+    now = DateTime.utc_now()
+
+    # Reset orphaned sessions
+    {session_count, _} =
+      Session
+      |> where([s], s.status == "running")
+      |> Repo.update_all(
+        set: [status: "failed", exit_code: -1, finished_at: now, updated_at: now]
+      )
+
+    # Reset ALL tasks that are marked as running
+    # (since no process should be running at startup)
+    {task_count, _} =
+      Task
+      |> where([t], t.status == "running")
+      |> Repo.update_all(set: [status: "failed", updated_at: now])
+
+    if task_count > 0 do
+      require Logger
+      Logger.info("Reset #{task_count} orphaned task(s) on startup")
+    end
+
+    session_count
+  end
+
   # ─────────────────────────────────────────────────────────────
   # Session Messages
   # ─────────────────────────────────────────────────────────────

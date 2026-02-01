@@ -147,6 +147,7 @@ defmodule ClaudeConductor.Sessions.SessionServer do
 
   @impl true
   def handle_info({port, {:data, data}}, %{port: port} = state) do
+    Logger.debug("Received #{byte_size(data)} bytes from CLI")
     {new_buffer, events} = JsonParser.process_chunk(data, state.buffer)
 
     new_state =
@@ -236,7 +237,12 @@ defmodule ClaudeConductor.Sessions.SessionServer do
     if is_nil(cli_path) do
       {:error, :cli_not_found}
     else
-      args = build_cli_args(state)
+      prompt = state.task.prompt || "Hello"
+      args = build_cli_args(state, prompt)
+
+      # Debug: Log the command being executed
+      Logger.info("CLI Command: #{cli_path}")
+      Logger.info("CLI Args: #{inspect(args)}")
 
       port_opts = [
         :binary,
@@ -274,14 +280,17 @@ defmodule ClaudeConductor.Sessions.SessionServer do
     end
   end
 
-  defp build_cli_args(state) do
+  defp build_cli_args(state, prompt) do
     # Use override args for testing if provided
     case Map.get(state, :cli_args_override) do
       nil ->
-        # -p/--print is for non-interactive mode (print and exit)
-        # The prompt is passed as the last positional argument
+        # --print takes the prompt as its argument for non-interactive mode
+        # --verbose is required for stream-json output format
+        # Working directory is set via port options {:cd, path}, not CLI args
         base_args = [
           "--print",
+          prompt,
+          "--verbose",
           "--output-format",
           "stream-json",
           "--dangerously-skip-permissions",
@@ -290,15 +299,11 @@ defmodule ClaudeConductor.Sessions.SessionServer do
         ]
 
         # Add --resume if we have a previous Claude session ID
-        base_args =
-          if state.claude_session_id do
-            base_args ++ ["--resume", state.claude_session_id]
-          else
-            base_args
-          end
-
-        # Prompt must be the last positional argument
-        base_args ++ [state.task.prompt || "Hello"]
+        if state.claude_session_id do
+          base_args ++ ["--resume", state.claude_session_id]
+        else
+          base_args
+        end
 
       override_args ->
         override_args

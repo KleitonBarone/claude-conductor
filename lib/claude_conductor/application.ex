@@ -24,7 +24,22 @@ defmodule ClaudeConductor.Application do
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: ClaudeConductor.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    case Supervisor.start_link(children, opts) do
+      {:ok, pid} ->
+        # Clean up any orphaned sessions from previous runs
+        reset_count = ClaudeConductor.Sessions.reset_orphaned_sessions()
+
+        if reset_count > 0 do
+          require Logger
+          Logger.info("Reset #{reset_count} orphaned session(s) on startup")
+        end
+
+        {:ok, pid}
+
+      error ->
+        error
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration

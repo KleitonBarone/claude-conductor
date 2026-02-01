@@ -168,32 +168,44 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
   @impl true
   def handle_info({:session_started, _}, socket), do: {:noreply, refresh_tasks(socket)}
 
-  def handle_info({:session_completed, %{exit_code: exit_code}}, socket) do
-    if socket.assigns.selected_task do
-      new_status = if exit_code == 0, do: "completed", else: "failed"
-      Projects.update_task_status(socket.assigns.selected_task, new_status)
-    end
-
-    messages =
-      if socket.assigns.selected_session,
-        do: Sessions.list_messages(socket.assigns.selected_session.id),
-        else: []
+  def handle_info({:session_completed, %{exit_code: _exit_code}}, socket) do
+    # Reload task and session from database to get updated status
+    {selected_task, selected_session, messages} =
+      if socket.assigns.selected_task do
+        task = Projects.get_task!(socket.assigns.selected_task.id)
+        session = Sessions.get_latest_session(task.id)
+        msgs = if session, do: Sessions.list_messages(session.id), else: []
+        {task, session, msgs}
+      else
+        {nil, nil, []}
+      end
 
     {:noreply,
      socket
      |> refresh_tasks()
+     |> assign(:selected_task, selected_task)
+     |> assign(:selected_session, selected_session)
      |> assign(:messages, messages)
      |> assign(:streaming_content, [])}
   end
 
   def handle_info({:session_failed, %{reason: reason}}, socket) do
-    if socket.assigns.selected_task do
-      Projects.update_task_status(socket.assigns.selected_task, "failed")
-    end
+    # Reload task and session from database to get updated status
+    {selected_task, selected_session} =
+      if socket.assigns.selected_task do
+        task = Projects.get_task!(socket.assigns.selected_task.id)
+        session = Sessions.get_latest_session(task.id)
+        {task, session}
+      else
+        {nil, nil}
+      end
 
     {:noreply,
      socket
      |> refresh_tasks()
+     |> assign(:selected_task, selected_task)
+     |> assign(:selected_session, selected_session)
+     |> assign(:streaming_content, [])
      |> put_flash(:error, "Session failed: #{inspect(reason)}")}
   end
 

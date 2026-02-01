@@ -12,6 +12,10 @@ delay = String.to_integer(System.get_env("MOCK_CLI_DELAY_MS", "10"))
 exit_code = String.to_integer(System.get_env("MOCK_CLI_EXIT_CODE", "0"))
 should_fail = System.get_env("MOCK_CLI_FAIL") == "true"
 
+# Read prompt from stdin (the real CLI does this)
+# Read one line (prompt ends with newline)
+_prompt = IO.gets("")
+
 if should_fail do
   IO.puts(:stderr, "Error: Mock CLI failure")
   System.halt(1)
