@@ -131,7 +131,7 @@ This runs:
 
 ## Project Status
 
-**Work in Progress** - Core infrastructure is set up, features being built.
+**Work in Progress** - Core infrastructure is set up, features being built actively.
 
 ## License
 
