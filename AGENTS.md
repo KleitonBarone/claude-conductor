@@ -29,10 +29,15 @@ ClaudeConductor (Application)
 
 ### Development Workflow
 
-- Use `mise run <task>` for all commands (see README for full list)
+- Use `mise run <task>` for all commands (see .mise.toml for full list)
 - Run `mise run pc` (precommit) before committing
 - Use `mise run gen:migration name` for new migrations
 - Use `mise run gen:live` for new LiveViews
+
+### Terminal Environment (Important)
+
+- Always run commands using the user's configured shell environment (login/interactive profile) so `PATH` matches the user's terminal.
+- Keep using `mise run <task>` once `mise` is resolved; do not bypass project tasks with ad-hoc `mix` commands.
 
 ### GenServer Patterns (SessionServer)
 
