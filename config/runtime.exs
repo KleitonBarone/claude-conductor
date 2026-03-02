@@ -23,7 +23,31 @@ end
 config :claude_conductor, ClaudeConductorWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+llm_provider = System.get_env("LLM_PROVIDER", "openai_compatible")
+llm_api_base = System.get_env("LLM_API_BASE", "https://api.openai.com/v1")
+llm_api_key = System.get_env("LLM_API_KEY")
+llm_model = System.get_env("LLM_MODEL", "gpt-4o-mini")
+llm_timeout_ms = String.to_integer(System.get_env("LLM_TIMEOUT_MS", "60000"))
+
+provider_module =
+  case llm_provider do
+    "openai_compatible" -> ClaudeConductor.Sessions.Providers.OpenAICompatible
+    _ -> ClaudeConductor.Sessions.Providers.OpenAICompatible
+  end
+
+config :claude_conductor, :llm,
+  provider: llm_provider,
+  provider_module: provider_module,
+  api_base: llm_api_base,
+  api_key: llm_api_key,
+  model: llm_model,
+  timeout_ms: llm_timeout_ms
+
 if config_env() == :prod do
+  if is_nil(llm_api_key) or llm_api_key == "" do
+    raise "environment variable LLM_API_KEY is missing."
+  end
+
   database_path =
     System.get_env("DATABASE_PATH") ||
       raise """

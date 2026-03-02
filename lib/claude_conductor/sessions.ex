@@ -1,6 +1,6 @@
 defmodule ClaudeConductor.Sessions do
   @moduledoc """
-  The Sessions context manages Claude Code CLI sessions and their messages.
+  The Sessions context manages LLM execution sessions and their messages.
   """
 
   import Ecto.Query
@@ -171,9 +171,9 @@ defmodule ClaudeConductor.Sessions do
   alias ClaudeConductor.Sessions.{SessionSupervisor, SessionServer, SessionRegistry}
 
   @doc """
-  Start executing a session with Claude Code CLI.
+  Start executing a session with the configured LLM provider.
 
-  Creates a SessionServer process that manages the CLI interaction.
+  Creates a SessionServer process that manages provider interaction.
   The session must already exist in the database.
 
   ## Returns

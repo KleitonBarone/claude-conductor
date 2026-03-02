@@ -1,13 +1,13 @@
 # Claude Conductor
 
-A task-focused UI for orchestrating multiple Claude Code sessions in parallel.
+A task-focused UI for orchestrating multiple LLM sessions in parallel.
 
 ## What is this?
 
-Claude Conductor is a web interface that wraps [Claude Code CLI](https://github.com/anthropics/claude-code) to provide:
+Claude Conductor is a web interface that executes tasks against configurable LLM APIs to provide:
 
 - **Project Board** - Organize work into projects with multiple tasks
-- **Parallel Sessions** - Run multiple Claude Code sessions simultaneously
+- **Parallel Sessions** - Run multiple LLM sessions simultaneously
 - **Auto Context** - Automatically include and update project files as context
 - **MCP Support** - Core MCP server integration
 
@@ -34,8 +34,8 @@ Claude Conductor is a web interface that wraps [Claude Code CLI](https://github.
 │         │                 │                 │               │
 │         ▼                 ▼                 ▼               │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │    Port      │  │    Port      │  │    Port      │       │
-│  │ claude-code  │  │ claude-code  │  │ claude-code  │       │
+│  │  LLM API     │  │  LLM API     │  │  LLM API     │       │
+│  │  Request     │  │  Request     │  │  Request     │       │
 │  └──────────────┘  └──────────────┘  └──────────────┘       │
 └─────────────────────────────────────────────────────────────┘
            │
@@ -56,7 +56,16 @@ Claude Conductor is a web interface that wraps [Claude Code CLI](https://github.
 ## Prerequisites
 
 - [mise](https://mise.jdx.dev/) for runtime management
-- [Claude Code CLI](https://github.com/anthropics/claude-code) installed and configured
+
+## Environment Variables
+
+Set these variables before starting the app:
+
+- `LLM_PROVIDER` (default: `openai_compatible`)
+- `LLM_API_BASE` (default: `https://api.openai.com/v1`)
+- `LLM_API_KEY` (required in production)
+- `LLM_MODEL` (default: `gpt-4o-mini`)
+- `LLM_TIMEOUT_MS` (default: `60000`)
 
 ## Setup
 

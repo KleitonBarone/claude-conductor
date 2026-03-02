@@ -1,7 +1,7 @@
 defmodule ClaudeConductor.Context do
   @moduledoc """
   The Context module manages project context files that are included
-  in Claude Code sessions.
+  in LLM sessions.
   """
 
   import Ecto.Query

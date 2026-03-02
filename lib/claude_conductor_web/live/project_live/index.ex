@@ -167,7 +167,7 @@ defmodule ClaudeConductorWeb.ProjectLive.Index do
         <.empty_state
           :if={!@has_projects && !@show_form}
           title="No projects yet"
-          description="Create your first project to start orchestrating Claude Code tasks."
+          description="Create your first project to start orchestrating LLM tasks."
         >
           <:action>
             <button phx-click="toggle_form" class="btn btn-primary">

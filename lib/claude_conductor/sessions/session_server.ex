@@ -1,11 +1,11 @@
 defmodule ClaudeConductor.Sessions.SessionServer do
   @moduledoc """
-  GenServer that manages a Claude Code CLI session via Port.
+  GenServer that manages LLM session execution.
 
   ## Responsibilities
 
-  - Opens Port to claude CLI with stream-json output
-  - Parses streaming NDJSON and persists messages to database
+  - Executes prompt via configured LLM provider
+  - Persists messages to database
   - Broadcasts updates via PubSub for LiveView
   - Handles graceful shutdown and error recovery
 
@@ -25,11 +25,8 @@ defmodule ClaudeConductor.Sessions.SessionServer do
   require Logger
 
   alias ClaudeConductor.Sessions
-  alias ClaudeConductor.Sessions.{JsonParser, SessionRegistry}
+  alias ClaudeConductor.Sessions.{SessionRegistry, Providers.OpenAICompatible}
   alias ClaudeConductor.Projects
-
-  @cli_executable "claude"
-  @default_tools ~w(Bash Read Edit Write Glob Grep)
 
   # ─────────────────────────────────────────────────────────────
   # Public API
@@ -78,8 +75,8 @@ defmodule ClaudeConductor.Sessions.SessionServer do
   @impl true
   def init(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
-    cli_override = Keyword.get(opts, :cli_override)
-    cli_args_override = Keyword.get(opts, :cli_args_override)
+    provider_module_override = Keyword.get(opts, :provider_module)
+    provider_config_override = Keyword.get(opts, :provider_config)
     Process.flag(:trap_exit, true)
 
     # Load session with associations
@@ -92,48 +89,44 @@ defmodule ClaudeConductor.Sessions.SessionServer do
       session: session,
       task: task,
       project: project,
-      port: nil,
-      buffer: "",
-      claude_session_id: nil,
+      request_pid: nil,
+      request_ref: nil,
       status: :starting,
-      cli_override: cli_override,
-      cli_args_override: cli_args_override
+      provider_module_override: provider_module_override,
+      provider_config_override: provider_config_override
     }
 
-    # Start the CLI process asynchronously
-    {:ok, state, {:continue, :start_cli}}
+    {:ok, state, {:continue, :start_request}}
   end
 
   @impl true
-  def handle_continue(:start_cli, state) do
-    case start_cli_port(state) do
-      {:ok, port} ->
-        # Update session status in database
-        {:ok, session} = Sessions.start_session(state.session)
-        broadcast(state.session_id, :session_started, %{})
+  def handle_continue(:start_request, state) do
+    {:ok, session} = Sessions.start_session(state.session)
+    broadcast(state.session_id, :session_started, %{})
 
-        Logger.info("SessionServer started for session #{state.session_id}")
-        {:noreply, %{state | port: port, session: session, status: :running}}
+    {request_pid, request_ref} = spawn_request_worker(state)
 
-      {:error, reason} ->
-        Logger.error("Failed to start CLI for session #{state.session_id}: #{inspect(reason)}")
-        {:ok, _session} = Sessions.complete_session(state.session, 1)
-        broadcast(state.session_id, :session_failed, %{reason: reason})
-        {:stop, {:shutdown, reason}, state}
-    end
+    Logger.info("SessionServer started for session #{state.session_id}")
+
+    {:noreply,
+     %{
+       state
+       | session: session,
+         request_pid: request_pid,
+         request_ref: request_ref,
+         status: :running
+     }}
   end
 
   @impl true
-  def handle_continue(:graceful_stop, %{port: port} = state) when not is_nil(port) do
-    # Close the port which sends SIGTERM to the CLI process
-    # Keep the port reference so we can match the EXIT message
-    Port.close(port)
-    {:noreply, %{state | status: :stopping}}
+  def handle_continue(:graceful_stop, %{request_pid: request_pid} = state)
+      when is_pid(request_pid) do
+    Process.exit(request_pid, :kill)
+    complete_and_stop(state, 130, :normal)
   end
 
   def handle_continue(:graceful_stop, state) do
-    # No port to close, complete the session and stop
-    complete_and_stop(state, 0, :normal)
+    complete_and_stop(state, 130, :normal)
   end
 
   @impl true
@@ -146,37 +139,37 @@ defmodule ClaudeConductor.Sessions.SessionServer do
   end
 
   @impl true
-  def handle_info({port, {:data, data}}, %{port: port} = state) do
-    Logger.debug("Received #{byte_size(data)} bytes from CLI")
-    {new_buffer, events} = JsonParser.process_chunk(data, state.buffer)
-
-    new_state =
-      Enum.reduce(events, %{state | buffer: new_buffer}, fn event, acc ->
-        handle_cli_event(event, acc)
-      end)
-
-    {:noreply, new_state}
+  def handle_info({:provider_result, {:ok, result}}, %{status: :running} = state) do
+    new_state = persist_provider_success(state, result)
+    complete_and_stop(new_state, 0, :normal)
   end
 
-  def handle_info({port, {:exit_status, exit_code}}, %{port: port} = state) do
-    Logger.info("CLI exited with code #{exit_code} for session #{state.session_id}")
-    complete_and_stop(state, exit_code, :normal)
+  def handle_info({:provider_result, {:error, reason}}, %{status: :running} = state) do
+    Logger.error("Provider request failed for session #{state.session_id}: #{inspect(reason)}")
+    broadcast(state.session_id, :session_failed, %{reason: reason})
+    complete_and_stop(state, 1, :normal)
   end
 
-  # Handle EXIT when we initiated the stop (status is :stopping)
-  def handle_info({:EXIT, port, reason}, %{port: port, status: :stopping} = state) do
-    Logger.info("Port closed gracefully for session #{state.session_id}: #{inspect(reason)}")
-    complete_and_stop(state, 0, :normal)
+  def handle_info({:provider_result, _result}, state) do
+    {:noreply, state}
   end
 
-  # Handle unexpected EXIT (crash or external termination)
-  def handle_info({:EXIT, port, reason}, %{port: port} = state) do
-    Logger.warning("Port exited unexpectedly for session #{state.session_id}: #{inspect(reason)}")
+  def handle_info(
+        {:DOWN, request_ref, :process, request_pid, reason},
+        %{request_ref: request_ref, request_pid: request_pid, status: :running} = state
+      ) do
+    case reason do
+      :normal ->
+        {:noreply, %{state | request_pid: nil, request_ref: nil}}
 
-    {:ok, session} = Sessions.complete_session(state.session, 1)
-    broadcast(state.session_id, :session_failed, %{reason: :port_crashed})
+      _ ->
+        Logger.error(
+          "Provider worker crashed for session #{state.session_id}: #{inspect(reason)}"
+        )
 
-    {:stop, :normal, %{state | port: nil, session: session}}
+        broadcast(state.session_id, :session_failed, %{reason: :provider_crashed})
+        complete_and_stop(%{state | request_pid: nil, request_ref: nil}, 1, :normal)
+    end
   end
 
   def handle_info(msg, state) do
@@ -188,9 +181,8 @@ defmodule ClaudeConductor.Sessions.SessionServer do
   def terminate(reason, state) do
     Logger.info("SessionServer terminating for session #{state.session_id}: #{inspect(reason)}")
 
-    # Close port if still open
-    if state.port do
-      Port.close(state.port)
+    if is_pid(state.request_pid) do
+      Process.exit(state.request_pid, :kill)
     end
 
     # Ensure session is marked as completed/failed if still running
@@ -219,7 +211,7 @@ defmodule ClaudeConductor.Sessions.SessionServer do
     update_task_status(state.task, exit_code)
     broadcast(state.session_id, :session_completed, %{exit_code: exit_code})
 
-    {:stop, stop_reason, %{state | port: nil, session: session}}
+    {:stop, stop_reason, %{state | request_pid: nil, request_ref: nil, session: session}}
   end
 
   defp update_task_status(task, exit_code) do
@@ -227,211 +219,63 @@ defmodule ClaudeConductor.Sessions.SessionServer do
     Projects.update_task_status(task, new_status)
   end
 
-  # ─────────────────────────────────────────────────────────────
-  # Private Functions - Port Management
-  # ─────────────────────────────────────────────────────────────
+  defp spawn_request_worker(state) do
+    parent = self()
+    prompt = state.task.prompt || "Hello"
+    provider_module = provider_module(state)
+    config = provider_config(state)
 
-  defp start_cli_port(state) do
-    cli_path = find_cli_executable(state)
-
-    if is_nil(cli_path) do
-      {:error, :cli_not_found}
-    else
-      prompt = state.task.prompt || "Hello"
-      args = build_cli_args(state, prompt)
-
-      # Debug: Log the command being executed
-      Logger.info("CLI Command: #{cli_path}")
-      Logger.info("CLI Args: #{inspect(args)}")
-
-      port_opts = [
-        :binary,
-        :exit_status,
-        :use_stdio,
-        :stderr_to_stdout,
-        {:args, args}
-      ]
-
-      # Add working directory if project path exists
-      port_opts =
-        if File.dir?(state.project.path) do
-          [{:cd, String.to_charlist(state.project.path)} | port_opts]
-        else
-          Logger.warning("Project path does not exist: #{state.project.path}")
-          port_opts
-        end
-
-      port = Port.open({:spawn_executable, cli_path}, port_opts)
-      {:ok, port}
-    end
+    spawn_monitor(fn ->
+      result = provider_module.complete(prompt, config: config)
+      send(parent, {:provider_result, result})
+    end)
   end
 
-  defp find_cli_executable(state) do
-    # Check for test override first
-    case Map.get(state, :cli_override) do
-      nil ->
-        # Try common locations
-        System.find_executable(@cli_executable) ||
-          System.find_executable("claude.cmd") ||
-          System.find_executable("claude.exe")
+  defp provider_module(%{provider_module_override: module}) when is_atom(module), do: module
 
-      override ->
-        override
-    end
+  defp provider_module(state) do
+    state
+    |> provider_config()
+    |> Map.get(:provider_module, OpenAICompatible)
   end
 
-  defp build_cli_args(state, prompt) do
-    # Use override args for testing if provided
-    case Map.get(state, :cli_args_override) do
-      nil ->
-        # --print takes the prompt as its argument for non-interactive mode
-        # --verbose is required for stream-json output format
-        # Working directory is set via port options {:cd, path}, not CLI args
-        base_args = [
-          "--print",
-          prompt,
-          "--verbose",
-          "--output-format",
-          "stream-json",
-          "--dangerously-skip-permissions",
-          "--allowedTools",
-          Enum.join(@default_tools, ",")
-        ]
-
-        # Add --resume if we have a previous Claude session ID
-        if state.claude_session_id do
-          base_args ++ ["--resume", state.claude_session_id]
-        else
-          base_args
-        end
-
-      override_args ->
-        override_args
-    end
+  defp provider_config(%{provider_config_override: override}) when is_map(override) do
+    Map.merge(Application.get_env(:claude_conductor, :llm, %{}), override)
   end
 
-  # ─────────────────────────────────────────────────────────────
-  # Private Functions - Event Handling
-  # ─────────────────────────────────────────────────────────────
+  defp provider_config(_state) do
+    Application.get_env(:claude_conductor, :llm, %{})
+  end
 
-  defp handle_cli_event(%{"type" => "assistant"} = event, state) do
-    content = extract_message_content(event)
+  defp persist_provider_success(state, result) do
+    content = Map.get(result, :content, "")
+
+    metadata =
+      %{
+        "provider" => Map.get(result, :provider),
+        "model" => Map.get(result, :model),
+        "request_id" => Map.get(result, :request_id),
+        "usage" => Map.get(result, :usage, %{})
+      }
+      |> Enum.reject(fn {_k, value} -> is_nil(value) end)
+      |> Map.new()
 
     if content != "" do
-      {:ok, _message} =
-        Sessions.add_assistant_message(
-          state.session_id,
-          content,
-          Map.take(event, ["id", "model", "stop_reason"])
-        )
+      {:ok, _message} = Sessions.add_assistant_message(state.session_id, content, metadata)
+      broadcast(state.session_id, :message, %{role: "assistant", content: content})
     end
 
-    broadcast(state.session_id, :message, %{role: "assistant", content: content, event: event})
-    state
+    session_attrs = %{
+      provider: Map.get(result, :provider),
+      model: Map.get(result, :model),
+      request_id: Map.get(result, :request_id),
+      usage: Map.get(result, :usage, %{})
+    }
+
+    {:ok, session} = Sessions.update_session(state.session, session_attrs)
+
+    %{state | session: session, request_pid: nil, request_ref: nil}
   end
-
-  defp handle_cli_event(%{"type" => "user"} = event, state) do
-    content = extract_message_content(event)
-
-    if content != "" do
-      {:ok, _message} = Sessions.add_user_message(state.session_id, content, %{})
-    end
-
-    broadcast(state.session_id, :message, %{role: "user", content: content, event: event})
-    state
-  end
-
-  defp handle_cli_event(%{"type" => "tool_use"} = event, state) do
-    tool_name = Map.get(event, "name", "unknown")
-
-    {:ok, _message} =
-      Sessions.add_tool_message(
-        state.session_id,
-        "Tool: #{tool_name}",
-        event
-      )
-
-    broadcast(state.session_id, :tool_use, event)
-    state
-  end
-
-  defp handle_cli_event(%{"type" => "tool_result"} = event, state) do
-    broadcast(state.session_id, :tool_result, event)
-    state
-  end
-
-  defp handle_cli_event(%{"type" => "system"} = event, state) do
-    # Capture the CLI session ID for potential --resume later
-    claude_session_id = Map.get(event, "session_id")
-
-    if claude_session_id do
-      %{state | claude_session_id: claude_session_id}
-    else
-      state
-    end
-  end
-
-  defp handle_cli_event(%{"type" => "content_block_delta"} = event, state) do
-    # Partial/streaming content - broadcast but don't persist
-    broadcast(state.session_id, :content_delta, event)
-    state
-  end
-
-  defp handle_cli_event(%{"type" => "content_block_start"} = event, state) do
-    broadcast(state.session_id, :content_block_start, event)
-    state
-  end
-
-  defp handle_cli_event(%{"type" => "content_block_stop"} = event, state) do
-    broadcast(state.session_id, :content_block_stop, event)
-    state
-  end
-
-  defp handle_cli_event(%{"type" => "message_start"} = event, state) do
-    broadcast(state.session_id, :message_start, event)
-    state
-  end
-
-  defp handle_cli_event(%{"type" => "message_stop"} = event, state) do
-    broadcast(state.session_id, :message_stop, event)
-    state
-  end
-
-  defp handle_cli_event(%{"type" => type} = event, state) do
-    Logger.debug("Unhandled CLI event type: #{type}")
-    broadcast(state.session_id, :unknown_event, event)
-    state
-  end
-
-  defp handle_cli_event(event, state) do
-    Logger.debug("CLI event without type: #{inspect(event)}")
-    state
-  end
-
-  # ─────────────────────────────────────────────────────────────
-  # Private Functions - Helpers
-  # ─────────────────────────────────────────────────────────────
-
-  defp extract_message_content(%{"content" => content}) when is_binary(content) do
-    content
-  end
-
-  defp extract_message_content(%{"content" => content}) when is_list(content) do
-    content
-    |> Enum.map(&extract_content_block/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join("\n")
-  end
-
-  defp extract_message_content(%{"message" => %{"content" => content}}) do
-    extract_message_content(%{"content" => content})
-  end
-
-  defp extract_message_content(_), do: ""
-
-  defp extract_content_block(%{"type" => "text", "text" => text}), do: text
-  defp extract_content_block(%{"type" => "tool_use"}), do: ""
-  defp extract_content_block(_), do: ""
 
   defp broadcast(session_id, event, payload) do
     Phoenix.PubSub.broadcast(

@@ -1,12 +1,12 @@
 # Claude Conductor - Agent Guidelines
 
-This is Claude Conductor, a Phoenix LiveView application for orchestrating multiple Claude Code CLI sessions.
+This is Claude Conductor, a Phoenix LiveView application for orchestrating multiple LLM sessions.
 
 ## Project Overview
 
-Claude Conductor wraps the Claude Code CLI to provide:
+Claude Conductor executes configurable LLM API requests to provide:
 - A board-style UI for managing projects and tasks
-- Parallel Claude Code session execution
+- Parallel LLM session execution
 - Automatic context management from project files
 - Real-time streaming of session output via LiveView
 
@@ -16,9 +16,9 @@ Claude Conductor wraps the Claude Code CLI to provide:
 ClaudeConductor (Application)
 ├── ClaudeConductor.Repo              # SQLite database
 ├── ClaudeConductor.Projects          # Context for projects/tasks
-├── ClaudeConductor.Sessions          # Context for Claude Code sessions
+├── ClaudeConductor.Sessions          # Context for LLM sessions
 │   ├── SessionSupervisor             # DynamicSupervisor for sessions
-│   └── SessionServer                 # GenServer wrapping Claude Code CLI
+│   └── SessionServer                 # GenServer executing LLM requests
 └── ClaudeConductorWeb                # Phoenix web layer
     ├── BoardLive                     # Main board view
     ├── ProjectLive                   # Project detail view
@@ -55,27 +55,12 @@ SessionServer.send_message(task_id, "your prompt here")
 SessionServer.stop(task_id)
 ```
 
-### Port Communication (Claude Code CLI)
+### LLM Provider Communication
 
-When working with the Claude Code CLI wrapper:
+When working with the LLM provider wrapper:
 
 ```elixir
-# Ports use binary mode for proper output handling
-port = Port.open({:spawn_executable, cli_path}, [
-  :binary,
-  :exit_status,
-  :use_stdio,
-  args: ["--print", "--output-format", "json"]
-])
-
-# Always handle port messages in handle_info
-def handle_info({port, {:data, data}}, state) when port == state.port do
-  # Process CLI output
-end
-
-def handle_info({port, {:exit_status, status}}, state) do
-  # Handle CLI exit
-end
+# Providers should normalize responses and return consistent session events.
 ```
 
 ### PubSub for Real-time Updates

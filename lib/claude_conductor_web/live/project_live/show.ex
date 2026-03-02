@@ -334,7 +334,7 @@ defmodule ClaudeConductorWeb.ProjectLive.Show do
             <.input
               field={@task_form[:prompt]}
               type="text"
-              placeholder="Prompt for Claude..."
+              placeholder="Prompt for the LLM..."
               class="input-sm flex-[2]"
               phx-debounce="200"
             />

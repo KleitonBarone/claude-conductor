@@ -30,3 +30,11 @@ config :phoenix_live_view,
 # Sort query params output of verified routes for robust url comparisons
 config :phoenix,
   sort_verified_routes_query_params: true
+
+config :claude_conductor, :llm,
+  provider: "mock",
+  provider_module: ClaudeConductor.Sessions.MockProvider,
+  api_base: "http://localhost",
+  api_key: "test-key",
+  model: "test-model",
+  timeout_ms: 5_000

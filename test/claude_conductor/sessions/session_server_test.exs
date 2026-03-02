@@ -24,22 +24,7 @@ defmodule ClaudeConductor.Sessions.SessionServerTest do
 
     {:ok, session} = Sessions.create_session(%{task_id: task.id})
 
-    # Build path to mock CLI script
-    mock_cli = build_mock_cli_command()
-
-    %{project: project, task: task, session: session, mock_cli: mock_cli}
-  end
-
-  defp build_mock_cli_command do
-    # Use elixir to run our mock script
-    elixir_path = System.find_executable("elixir")
-    mock_script = Path.join([File.cwd!(), "test", "support", "mock_claude_cli.exs"])
-
-    if elixir_path && File.exists?(mock_script) do
-      {elixir_path, mock_script}
-    else
-      nil
-    end
+    %{project: project, task: task, session: session}
   end
 
   describe "start_link/1" do
@@ -75,57 +60,41 @@ defmodule ClaudeConductor.Sessions.SessionServerTest do
   end
 
   describe "PubSub integration" do
-    @tag :mock_cli
-    test "session events are broadcast", %{session: session, mock_cli: mock_cli} do
-      case mock_cli do
-        nil ->
-          :ok
+    test "session events are broadcast", %{session: session} do
+      Phoenix.PubSub.subscribe(ClaudeConductor.PubSub, "session:#{session.id}")
 
-        {elixir_path, mock_script} ->
-          # Subscribe to session events
-          Phoenix.PubSub.subscribe(ClaudeConductor.PubSub, "session:#{session.id}")
+      {:ok, _pid} = start_session_with_mock_provider(session.id)
 
-          # Start session with mock CLI
-          {:ok, _pid} = start_session_with_mock(session.id, elixir_path, mock_script)
-
-          # Should receive session_started event
-          assert_receive {:session_started, %{}}, 5000
-
-          # Wait for session to complete (exit code may be 0 or non-zero depending on mock)
-          assert_receive {:session_completed, %{exit_code: _}}, 10_000
-      end
+      assert_receive {:session_started, %{}}, 5000
+      assert_receive {:message, %{role: "assistant", content: "Hello from mock!"}}, 5000
+      assert_receive {:session_completed, %{exit_code: 0}}, 10_000
     end
   end
 
   describe "database persistence" do
-    @tag :mock_cli
-    test "session status is updated on start", %{session: session, mock_cli: mock_cli} do
-      case mock_cli do
-        nil ->
-          :ok
+    test "session status and metadata are updated", %{session: session} do
+      assert session.status == "idle"
 
-        {elixir_path, mock_script} ->
-          # Initial status should be idle
-          assert session.status == "idle"
+      {:ok, _pid} = start_session_with_mock_provider(session.id)
 
-          {:ok, _pid} = start_session_with_mock(session.id, elixir_path, mock_script)
+      Process.sleep(200)
 
-          # Wait a bit for status update
-          Process.sleep(200)
+      updated_session = Sessions.get_session!(session.id)
+      assert updated_session.status in ["running", "completed", "failed"]
+      assert updated_session.started_at != nil
 
-          # Check session is now running or completed
-          updated_session = Sessions.get_session!(session.id)
-          assert updated_session.status in ["running", "completed", "failed"]
-          assert updated_session.started_at != nil
+      wait_for_session_completion(session.id)
 
-          # Wait for completion
-          wait_for_session_completion(session.id)
+      final_session = Sessions.get_session!(session.id)
+      assert final_session.status in ["completed", "failed"]
+      assert final_session.finished_at != nil
+      assert final_session.provider == "mock"
+      assert final_session.model == "mock-model"
+      assert final_session.request_id == "mock-request-123"
+      assert final_session.usage["total_tokens"] == 7
 
-          # Check session has finished
-          final_session = Sessions.get_session!(session.id)
-          assert final_session.status in ["completed", "failed"]
-          assert final_session.finished_at != nil
-      end
+      messages = Sessions.list_messages(session.id)
+      assert Enum.any?(messages, &(&1.role == "assistant" and &1.content == "Hello from mock!"))
     end
   end
 
@@ -133,11 +102,9 @@ defmodule ClaudeConductor.Sessions.SessionServerTest do
   # Helpers
   # ─────────────────────────────────────────────────────────────
 
-  defp start_session_with_mock(session_id, elixir_path, mock_script) do
-    # Create a wrapper that calls elixir with the mock script
+  defp start_session_with_mock_provider(session_id) do
     SessionSupervisor.start_session(session_id,
-      cli_override: elixir_path,
-      cli_args_override: [mock_script]
+      provider_module: ClaudeConductor.Sessions.MockProvider
     )
   end
 

@@ -11,6 +11,14 @@ config :claude_conductor,
   ecto_repos: [ClaudeConductor.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :claude_conductor, :llm,
+  provider: "openai_compatible",
+  provider_module: ClaudeConductor.Sessions.Providers.OpenAICompatible,
+  api_base: "https://api.openai.com/v1",
+  api_key: nil,
+  model: "gpt-4o-mini",
+  timeout_ms: 60_000
+
 # Configure the endpoint
 config :claude_conductor, ClaudeConductorWeb.Endpoint,
   url: [host: "localhost"],

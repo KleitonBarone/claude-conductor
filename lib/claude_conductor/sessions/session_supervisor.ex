@@ -2,7 +2,7 @@ defmodule ClaudeConductor.Sessions.SessionSupervisor do
   @moduledoc """
   DynamicSupervisor for managing SessionServer processes.
 
-  Each SessionServer wraps a Claude Code CLI process via Port.
+  Each SessionServer executes one prompt against the configured LLM provider.
   Sessions are identified by their database session_id and registered
   in SessionRegistry for lookup.
   """
